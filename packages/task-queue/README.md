@@ -1,6 +1,6 @@
 # @ventus_software/task-queue
 
-File-based stateless-façade task queue with pluggable storage. Battle-tested by [AIDE](https://github.com/ventus-software-solutions/aide).
+File-based stateless-façade task queue with pluggable storage. Battle-tested by [AIDE](https://github.com/ventus-software-solutions/about-aide).
 
 ## Why this exists
 
