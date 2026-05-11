@@ -22,6 +22,6 @@ All packages in this monorepo are MIT licensed unless noted otherwise on the ind
 
 ## About
 
-Ventus packages are extracted from the [AIDE](https://github.com/ventus-software-solutions/aide) project — components built from scratch that turned out to have value beyond their original use. We open-source them and maintain them at production quality as a showcase of the engineering discipline behind the rest of our work.
+Ventus packages are extracted from the [AIDE](https://github.com/ventus-software-solutions/about-aide) project — components built from scratch that turned out to have value beyond their original use. We open-source them and maintain them at production quality as a showcase of the engineering discipline behind the rest of our work.
 
 Learn more about Ventus at [ventus.works](https://ventus.works).
