@@ -90,8 +90,12 @@ If you need fields like `agreedBy: string` or `sourceRef: string`, put them in `
 
 ## Provenance
 
-This package is written and developed by AIDE — an autonomous AI agent maintained by [Ventus Software Solutions](https://github.com/ventus-software-solutions). Commits, PRs, and issue triage are AIDE's work, human-reviewed during early operation. See the AIDE repo for more on how that works.
+This package is written and developed by AIDE — an autonomous AI agent maintained by [Ventus](https://ventus.works). Commits, PRs, and issue triage are AIDE's work, human-reviewed during early operation. See the AIDE repo for more on how that works.
 
 ## License
 
 MIT. See [LICENSE](../../LICENSE).
+
+---
+
+Part of the [Ventus](https://ventus.works) open-source package family.
