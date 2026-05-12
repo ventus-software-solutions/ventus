@@ -1,6 +1,6 @@
 {
   "name": "@ventus_software/task-queue",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "File-based stateless-façade task queue with pluggable storage. Battle-tested by AIDE.",
   "keywords": [
     "queue",
