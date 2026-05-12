@@ -1,7 +1,7 @@
 {
   "name": "@ventus-software-solutions/task-queue",
-  "version": "0.1.0",
-  "description": "File-based stateless-façade task queue with pluggable storage. Battle-tested by AIDE.",
+  "version": "0.2.0",
+  "description": "File-based stateless-facade task queue with pluggable storage.",
   "keywords": [
     "queue",
     "task-queue",
@@ -19,7 +19,7 @@
     "directory": "packages/task-queue"
   },
   "bugs": {
-    "url": "https://github.com/ventus-software-solutions/ventus/issues"
+    "url": "https://github.com/ventus-software-solutions/ventus-packages/issues"
   },
   "license": "MIT",
   "type": "module",
@@ -37,7 +37,7 @@
     "provenance": true
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "\u003e=20.0.0"
   },
   "scripts": {
     "build": "tsc",
