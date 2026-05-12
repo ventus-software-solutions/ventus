@@ -30,14 +30,14 @@ describe('TaskQueue', () => {
     const task = await queue.enqueue('ship package', {
       priority: 'high',
       source: 'user',
-      metadata: { package: '@ventus_software/task-queue' },
+      metadata: { package: '@ventus-software-solutions/task-queue' },
     });
 
     expect(task).toMatchObject({
       description: 'ship package',
       priority: 'high',
       source: 'user',
-      metadata: { package: '@ventus_software/task-queue' },
+      metadata: { package: '@ventus-software-solutions/task-queue' },
     });
     expect(task).not.toHaveProperty('agreed');
     expect(task).not.toHaveProperty('sourceRef');

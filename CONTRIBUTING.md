@@ -1,6 +1,6 @@
 # Contributing to Ventus
 
-Thank you for considering a contribution. This monorepo houses multiple independent npm packages under the `@ventus_software` scope.
+Thank you for considering a contribution. This monorepo houses multiple independent npm packages under the `@ventus-software-solutions` scope.
 
 ## Development setup
 
