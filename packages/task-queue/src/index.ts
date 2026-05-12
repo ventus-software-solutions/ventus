@@ -129,7 +129,9 @@ export class FileStorage implements Storage {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       await fs.writeFile(this.filePath, `${JSON.stringify(emptyState(), null, 2)}\n`, 'utf8');
     }
-    const release = await lockfile.lock(this.filePath, { retries: { retries: 5, minTimeout: 25, maxTimeout: 100 } });
+    const release = await lockfile.lock(this.filePath, {
+      retries: { retries: 5, minTimeout: 25, maxTimeout: 100 },
+    });
     try {
       return await fn();
     } finally {
@@ -151,7 +153,10 @@ export class TaskQueue {
       const task = createTask(description, opts);
       state.pending.push(task);
       state.pending.sort(comparePriority);
-      appendEvent(state, this.maxEvents, 'task.enqueued', task.id, { priority: task.priority, source: task.source });
+      appendEvent(state, this.maxEvents, 'task.enqueued', task.id, {
+        priority: task.priority,
+        source: task.source,
+      });
       await this.options.storage.write(state);
       return task;
     });
@@ -160,12 +165,15 @@ export class TaskQueue {
   async changePriority(taskId: string, newPriority: TaskPriority): Promise<Task | null> {
     return this.options.storage.withLock(async () => {
       const state = await this.options.storage.read();
-      const task = state.pending.find(candidate => candidate.id === taskId) ?? null;
+      const task = state.pending.find((candidate) => candidate.id === taskId) ?? null;
       if (!task) return null;
       const previousPriority = task.priority;
       task.priority = newPriority;
       state.pending.sort(comparePriority);
-      appendEvent(state, this.maxEvents, 'task.priority_changed', task.id, { previousPriority, priority: newPriority });
+      appendEvent(state, this.maxEvents, 'task.priority_changed', task.id, {
+        previousPriority,
+        priority: newPriority,
+      });
       await this.options.storage.write(state);
       return task;
     });
@@ -177,8 +185,8 @@ export class TaskQueue {
       if (state.current) return state.current;
       state.pending.sort(comparePriority);
       const now = Date.now();
-      const nextIndex = state.pending.findIndex(task => isAvailable(task, now));
-      state.current = nextIndex >= 0 ? state.pending.splice(nextIndex, 1)[0] ?? null : null;
+      const nextIndex = state.pending.findIndex((task) => isAvailable(task, now));
+      state.current = nextIndex >= 0 ? (state.pending.splice(nextIndex, 1)[0] ?? null) : null;
       if (state.current) appendEvent(state, this.maxEvents, 'task.claimed', state.current.id);
       await this.options.storage.write(state);
       return state.current;
@@ -205,7 +213,9 @@ export class TaskQueue {
       const completed = completeTask(state.current, 'failed', { error: serializeError(error) });
       state.current = null;
       state.done.unshift(completed);
-      appendEvent(state, this.maxEvents, 'task.failed', completed.id, { message: completed.error?.message });
+      appendEvent(state, this.maxEvents, 'task.failed', completed.id, {
+        message: completed.error?.message,
+      });
       await this.options.storage.write(state);
       return completed;
     });
@@ -214,22 +224,30 @@ export class TaskQueue {
   async retry(taskId: string, opts: RetryOptions = {}): Promise<Task | null> {
     return this.options.storage.withLock(async () => {
       const state = await this.options.storage.read();
-      const original = state.done.find(task => task.id === taskId) ?? null;
-      if (!original || (original.outcome !== 'failed' && original.outcome !== 'superseded')) return null;
+      const original = state.done.find((task) => task.id === taskId) ?? null;
+      if (!original || (original.outcome !== 'failed' && original.outcome !== 'superseded'))
+        return null;
       const delayMs = opts.delayMs ?? 0;
       const metadata = opts.metadata ?? original.metadata;
-      const task = createTask(original.description, {
-        priority: opts.priority ?? original.priority,
-        source: original.source,
-        ...(metadata !== undefined ? { metadata } : {}),
-        ...(delayMs > 0 ? { availableAt: new Date(Date.now() + delayMs).toISOString() } : {}),
-      }, {
-        attempt: opts.attempt ?? original.attempt + 1,
-        parentTaskId: original.id,
-      });
+      const task = createTask(
+        original.description,
+        {
+          priority: opts.priority ?? original.priority,
+          source: original.source,
+          ...(metadata !== undefined ? { metadata } : {}),
+          ...(delayMs > 0 ? { availableAt: new Date(Date.now() + delayMs).toISOString() } : {}),
+        },
+        {
+          attempt: opts.attempt ?? original.attempt + 1,
+          parentTaskId: original.id,
+        },
+      );
       state.pending.push(task);
       state.pending.sort(comparePriority);
-      appendEvent(state, this.maxEvents, 'task.retried', original.id, { retryTaskId: task.id, delayMs });
+      appendEvent(state, this.maxEvents, 'task.retried', original.id, {
+        retryTaskId: task.id,
+        delayMs,
+      });
       await this.options.storage.write(state);
       return task;
     });
@@ -238,13 +256,28 @@ export class TaskQueue {
   async cancel(taskId: string, reason?: string): Promise<CompletedTask | null> {
     return this.options.storage.withLock(async () => {
       const state = await this.options.storage.read();
-      const pendingIndex = state.pending.findIndex(task => task.id === taskId);
-      const task = pendingIndex >= 0 ? state.pending.splice(pendingIndex, 1)[0] : state.current?.id === taskId ? state.current : null;
+      const pendingIndex = state.pending.findIndex((task) => task.id === taskId);
+      const task =
+        pendingIndex >= 0
+          ? state.pending.splice(pendingIndex, 1)[0]
+          : state.current?.id === taskId
+            ? state.current
+            : null;
       if (!task) return null;
       if (state.current?.id === taskId) state.current = null;
-      const completed = completeTask(task, 'cancelled', reason === undefined ? {} : { result: { reason } });
+      const completed = completeTask(
+        task,
+        'cancelled',
+        reason === undefined ? {} : { result: { reason } },
+      );
       state.done.unshift(completed);
-      appendEvent(state, this.maxEvents, 'task.cancelled', completed.id, reason === undefined ? undefined : { reason });
+      appendEvent(
+        state,
+        this.maxEvents,
+        'task.cancelled',
+        completed.id,
+        reason === undefined ? undefined : { reason },
+      );
       await this.options.storage.write(state);
       return completed;
     });
@@ -253,8 +286,13 @@ export class TaskQueue {
   async supersede(taskId: string, replacement: EnqueueReplacement): Promise<Task | null> {
     return this.options.storage.withLock(async () => {
       const state = await this.options.storage.read();
-      const pendingIndex = state.pending.findIndex(task => task.id === taskId);
-      const original = pendingIndex >= 0 ? state.pending.splice(pendingIndex, 1)[0] : state.current?.id === taskId ? state.current : null;
+      const pendingIndex = state.pending.findIndex((task) => task.id === taskId);
+      const original =
+        pendingIndex >= 0
+          ? state.pending.splice(pendingIndex, 1)[0]
+          : state.current?.id === taskId
+            ? state.current
+            : null;
       if (!original) return null;
       const replacementTask = createTask(replacement.description, replacement, {
         attempt: 1,
@@ -265,8 +303,14 @@ export class TaskQueue {
       state.done.unshift(completed);
       state.pending.push(replacementTask);
       state.pending.sort(comparePriority);
-      appendEvent(state, this.maxEvents, 'task.superseded', original.id, { supersededBy: replacementTask.id });
-      appendEvent(state, this.maxEvents, 'task.enqueued', replacementTask.id, { parentTaskId: original.id, priority: replacementTask.priority, source: replacementTask.source });
+      appendEvent(state, this.maxEvents, 'task.superseded', original.id, {
+        supersededBy: replacementTask.id,
+      });
+      appendEvent(state, this.maxEvents, 'task.enqueued', replacementTask.id, {
+        parentTaskId: original.id,
+        priority: replacementTask.priority,
+        source: replacementTask.source,
+      });
       await this.options.storage.write(state);
       return replacementTask;
     });
@@ -275,7 +319,11 @@ export class TaskQueue {
   async get(taskId: string): Promise<Task | CompletedTask | null> {
     const state = await this.options.storage.read();
     if (state.current?.id === taskId) return state.current;
-    return state.pending.find(task => task.id === taskId) ?? state.done.find(task => task.id === taskId) ?? null;
+    return (
+      state.pending.find((task) => task.id === taskId) ??
+      state.done.find((task) => task.id === taskId) ??
+      null
+    );
   }
 
   async list(filter: TaskFilter = {}): Promise<FilteredTasks> {
@@ -284,11 +332,22 @@ export class TaskQueue {
     const includeUnavailable = filter.includeUnavailable ?? true;
     const now = Date.now();
     return {
-      current: shouldIncludeStatus(statuses, 'current') && state.current && matchesTaskFilter(state.current, filter, 'current') ? state.current : null,
+      current:
+        shouldIncludeStatus(statuses, 'current') &&
+        state.current &&
+        matchesTaskFilter(state.current, filter, 'current')
+          ? state.current
+          : null,
       pending: shouldIncludeStatus(statuses, 'pending')
-        ? state.pending.filter(task => (includeUnavailable || isAvailable(task, now)) && matchesTaskFilter(task, filter, 'pending'))
+        ? state.pending.filter(
+            (task) =>
+              (includeUnavailable || isAvailable(task, now)) &&
+              matchesTaskFilter(task, filter, 'pending'),
+          )
         : [],
-      done: shouldIncludeStatus(statuses, 'done') ? state.done.filter(task => matchesTaskFilter(task, filter, 'done')) : [],
+      done: shouldIncludeStatus(statuses, 'done')
+        ? state.done.filter((task) => matchesTaskFilter(task, filter, 'done'))
+        : [],
     };
   }
 
@@ -308,11 +367,19 @@ function normalizeState(value: unknown): TaskQueueState {
     current: raw.current ? normalizeTask(raw.current) : null,
     pending: Array.isArray(raw.pending) ? raw.pending.map(normalizeTask) : [],
     done: Array.isArray(raw.done) ? raw.done.map(normalizeCompletedTask) : [],
-    events: Array.isArray(raw.events) ? raw.events.map(normalizeEvent).filter((event): event is TaskLifecycleEvent => Boolean(event)) : [],
+    events: Array.isArray(raw.events)
+      ? raw.events
+          .map(normalizeEvent)
+          .filter((event): event is TaskLifecycleEvent => Boolean(event))
+      : [],
   };
 }
 
-function createTask(description: string, opts: EnqueueOptions = {}, derived: { attempt?: number; parentTaskId?: string } = {}): Task {
+function createTask(
+  description: string,
+  opts: EnqueueOptions = {},
+  derived: { attempt?: number; parentTaskId?: string } = {},
+): Task {
   return {
     id: generateId(),
     description,
@@ -334,10 +401,15 @@ function normalizeTask(value: unknown): Task {
     priority: isPriority(raw.priority) ? raw.priority : 'normal',
     source: isSource(raw.source) ? raw.source : 'application',
     addedAt: typeof raw.addedAt === 'string' ? raw.addedAt : new Date().toISOString(),
-    attempt: typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) && raw.attempt > 0 ? raw.attempt : 1,
+    attempt:
+      typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) && raw.attempt > 0
+        ? raw.attempt
+        : 1,
     ...(typeof raw.availableAt === 'string' ? { availableAt: raw.availableAt } : {}),
     ...(typeof raw.parentTaskId === 'string' ? { parentTaskId: raw.parentTaskId } : {}),
-    ...(raw.metadata && typeof raw.metadata === 'object' ? { metadata: raw.metadata as Record<string, unknown> } : {}),
+    ...(raw.metadata && typeof raw.metadata === 'object'
+      ? { metadata: raw.metadata as Record<string, unknown> }
+      : {}),
   };
 }
 
@@ -362,25 +434,54 @@ function normalizeEvent(value: unknown): TaskLifecycleEvent | null {
     type: raw.type,
     taskId: raw.taskId,
     at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
-    ...(raw.data && typeof raw.data === 'object' ? { data: raw.data as Record<string, unknown> } : {}),
+    ...(raw.data && typeof raw.data === 'object'
+      ? { data: raw.data as Record<string, unknown> }
+      : {}),
   };
 }
 
-function completeTask(task: Task, outcome: TaskOutcome, extras: Partial<CompletedTask> = {}): CompletedTask {
-  const completed: CompletedTask = {
+function completeTask(
+  task: Task,
+  outcome: TaskOutcome,
+  extras: Partial<CompletedTask> = {},
+): CompletedTask {
+  const now = new Date().toISOString();
+  const { result, ...rest } = extras;
+  const baseCompleted = {
     ...task,
-    completedAt: new Date().toISOString(),
+    status: 'done' as const,
+    updatedAt: now,
+    completedAt: now,
     outcome,
-    ...extras,
+    ...rest,
   };
-  if (extras.result === undefined) delete completed.result;
+  const completed: CompletedTask =
+    result === undefined
+      ? baseCompleted
+      : {
+          ...baseCompleted,
+          result,
+        };
   return completed;
 }
 
-function appendEvent(state: TaskQueueState, maxEvents: number, type: TaskLifecycleEventType, taskId: string, data?: Record<string, unknown>): void {
+function appendEvent(
+  state: TaskQueueState,
+  maxEvents: number,
+  type: TaskLifecycleEventType,
+  taskId: string,
+  data?: Record<string, unknown>,
+): void {
   const events = state.events ?? [];
-  events.push({ id: generateId(), type, taskId, at: new Date().toISOString(), ...(data ? { data } : {}) });
-  state.events = maxEvents === Infinity ? events : events.slice(-Math.max(0, maxEvents));
+  events.push({
+    id: generateId(),
+    type,
+    taskId,
+    at: new Date().toISOString(),
+    ...(data ? { data } : {}),
+  });
+  state.events =
+    maxEvents === Number.POSITIVE_INFINITY ? events : events.slice(-Math.max(0, maxEvents));
 }
 
 function serializeError(error: Error | string | unknown): SerializedTaskError {
@@ -415,7 +516,11 @@ function isAvailable(task: Task, now = Date.now()): boolean {
   return !task.availableAt || Date.parse(task.availableAt) <= now;
 }
 
-function matchesTaskFilter(task: Task | CompletedTask, filter: TaskFilter, status: TaskStatus): boolean {
+function matchesTaskFilter(
+  task: Task | CompletedTask,
+  filter: TaskFilter,
+  status: TaskStatus,
+): boolean {
   const priorities = toSet(filter.priority);
   const sources = toSet(filter.source);
   const outcomes = toSet(filter.outcome);
@@ -443,18 +548,22 @@ function isSource(value: unknown): value is TaskSource {
 }
 
 function isOutcome(value: unknown): value is TaskOutcome {
-  return value === 'completed' || value === 'failed' || value === 'cancelled' || value === 'superseded';
+  return (
+    value === 'completed' || value === 'failed' || value === 'cancelled' || value === 'superseded'
+  );
 }
 
 function isEventType(value: unknown): value is TaskLifecycleEventType {
-  return value === 'task.enqueued'
-    || value === 'task.priority_changed'
-    || value === 'task.claimed'
-    || value === 'task.completed'
-    || value === 'task.failed'
-    || value === 'task.retried'
-    || value === 'task.cancelled'
-    || value === 'task.superseded';
+  return (
+    value === 'task.enqueued' ||
+    value === 'task.priority_changed' ||
+    value === 'task.claimed' ||
+    value === 'task.completed' ||
+    value === 'task.failed' ||
+    value === 'task.retried' ||
+    value === 'task.cancelled' ||
+    value === 'task.superseded'
+  );
 }
 
 function generateId(): string {

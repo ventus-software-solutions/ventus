@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FileStorage, TaskQueue, type Storage, type TaskQueueState } from '../src/index.js';
+import { FileStorage, type Storage, TaskQueue, type TaskQueueState } from '../src/index.js';
 
 class MemoryStorage implements Storage {
   state: TaskQueueState = { current: null, pending: [], done: [], events: [] };
@@ -42,7 +42,7 @@ describe('TaskQueue', () => {
     });
     expect(task).not.toHaveProperty('agreed');
     expect(task).not.toHaveProperty('sourceRef');
-    expect(storage.state.events?.map(event => event.type)).toEqual(['task.enqueued']);
+    expect(storage.state.events?.map((event) => event.type)).toEqual(['task.enqueued']);
     expect(storage.lockCalls).toBe(1);
   });
 
@@ -59,15 +59,19 @@ describe('TaskQueue', () => {
     expect(await queue.claimNext()).toMatchObject({ description: 'urgent work' });
 
     const completed = await queue.completeCurrent({ ok: true });
-    expect(completed).toMatchObject({ description: 'urgent work', outcome: 'completed', result: { ok: true } });
+    expect(completed).toMatchObject({
+      description: 'urgent work',
+      outcome: 'completed',
+      result: { ok: true },
+    });
 
     expect((await queue.claimNext())?.description).toBe('high work');
     expect((await queue.completeCurrent())?.result).toBeUndefined();
 
     const state = await queue.peek();
     expect(state.current).toBeNull();
-    expect(state.pending.map(task => task.description)).toEqual(['normal work', 'low work']);
-    expect(state.done.map(task => task.description)).toEqual(['high work', 'urgent work']);
+    expect(state.pending.map((task) => task.description)).toEqual(['normal work', 'low work']);
+    expect(state.done.map((task) => task.description)).toEqual(['high work', 'urgent work']);
     expect(storage.lockCalls).toBe(9);
   });
 
@@ -87,13 +91,18 @@ describe('TaskQueue', () => {
     const second = await queue.enqueue('second low', { priority: 'low' });
     const current = await queue.claimNext();
 
-    expect(current?.id).toBe(first.id);
-    expect(await queue.changePriority(current!.id, 'urgent')).toBeNull();
+    expect(current).toMatchObject({ id: first.id });
+    if (!current) {
+      throw new Error('Expected current task to exist');
+    }
+    expect(await queue.changePriority(current.id, 'urgent')).toBeNull();
 
     const updated = await queue.changePriority(second.id, 'urgent');
 
     expect(updated).toMatchObject({ id: second.id, priority: 'urgent' });
-    expect((await queue.peek()).pending.map(task => [task.id, task.priority])).toEqual([[second.id, 'urgent']]);
+    expect((await queue.peek()).pending.map((task) => [task.id, task.priority])).toEqual([
+      [second.id, 'urgent'],
+    ]);
     expect(await queue.changePriority('missing', 'high')).toBeNull();
     expect(storage.lockCalls).toBe(6);
   });
@@ -112,21 +121,30 @@ describe('TaskQueue', () => {
       error: { name: 'Error', message: 'outer', cause: { message: 'inner' } },
     });
 
-    const retry = await queue.retry(failed!.id, { delayMs: 60_000, priority: 'urgent' });
+    if (!failed) {
+      throw new Error('Expected failed task to exist');
+    }
+
+    const retry = await queue.retry(failed.id, { delayMs: 60_000, priority: 'urgent' });
 
     expect(retry).toMatchObject({
       description: 'transient call',
       priority: 'urgent',
       attempt: 2,
-      parentTaskId: failed!.id,
+      parentTaskId: failed.id,
       metadata: { endpoint: '/sync' },
     });
     expect(retry?.id).not.toBe(failed?.id);
     expect(retry?.availableAt).toEqual(expect.any(String));
     expect(await queue.claimNext()).toBeNull();
-    expect((await queue.list({ status: 'pending', includeUnavailable: false })).pending).toEqual([]);
+    expect((await queue.list({ status: 'pending', includeUnavailable: false })).pending).toEqual(
+      [],
+    );
     expect((await queue.list({ status: 'pending' })).pending).toHaveLength(1);
-    expect(await queue.retry(claimed!.id)).toMatchObject({ attempt: 2 });
+    if (!claimed) {
+      throw new Error('Expected claimed task to exist');
+    }
+    expect(await queue.retry(claimed.id)).toMatchObject({ attempt: 2 });
   });
 
   it('cancels pending/current tasks and supersedes only pending/current tasks', async () => {
@@ -136,14 +154,24 @@ describe('TaskQueue', () => {
     const pending = await queue.enqueue('obsolete pending');
     const cancelledPending = await queue.cancel(pending.id, 'not needed');
 
-    expect(cancelledPending).toMatchObject({ outcome: 'cancelled', result: { reason: 'not needed' } });
+    expect(cancelledPending).toMatchObject({
+      outcome: 'cancelled',
+      result: { reason: 'not needed' },
+    });
     expect(await queue.cancel(pending.id)).toBeNull();
 
     const current = await queue.enqueue('obsolete current');
     expect((await queue.claimNext())?.id).toBe(current.id);
-    const replacement = await queue.supersede(current.id, { description: 'replacement task', priority: 'high' });
+    const replacement = await queue.supersede(current.id, {
+      description: 'replacement task',
+      priority: 'high',
+    });
 
-    expect(replacement).toMatchObject({ description: 'replacement task', priority: 'high', parentTaskId: current.id });
+    expect(replacement).toMatchObject({
+      description: 'replacement task',
+      priority: 'high',
+      parentTaskId: current.id,
+    });
     const original = await queue.get(current.id);
     expect(original).toMatchObject({ outcome: 'superseded', supersededBy: replacement?.id });
     expect(await queue.supersede(current.id, { description: 'too late' })).toBeNull();
@@ -162,9 +190,19 @@ describe('TaskQueue', () => {
     expect(await queue.get(low.id)).toMatchObject({ id: low.id, description: 'low app' });
     expect(await queue.get(high.id)).toMatchObject({ id: high.id, outcome: 'completed' });
     expect(await queue.get('missing')).toBeNull();
-    expect((await queue.list({ status: 'pending', priority: 'low' })).pending.map(task => task.id)).toEqual([low.id]);
-    expect((await queue.list({ status: 'done', source: 'user', outcome: 'completed' })).done.map(task => task.id)).toEqual([high.id]);
-    expect(await queue.list({ status: ['current'] })).toEqual({ current: null, pending: [], done: [] });
+    expect(
+      (await queue.list({ status: 'pending', priority: 'low' })).pending.map((task) => task.id),
+    ).toEqual([low.id]);
+    expect(
+      (await queue.list({ status: 'done', source: 'user', outcome: 'completed' })).done.map(
+        (task) => task.id,
+      ),
+    ).toEqual([high.id]);
+    expect(await queue.list({ status: ['current'] })).toEqual({
+      current: null,
+      pending: [],
+      done: [],
+    });
   });
 
   it('bounds lifecycle events with maxEvents', async () => {
@@ -176,7 +214,11 @@ describe('TaskQueue', () => {
     await queue.claimNext();
     await queue.completeCurrent();
 
-    expect((await queue.peek()).events?.map(event => event.type)).toEqual(['task.enqueued', 'task.claimed', 'task.completed']);
+    expect((await queue.peek()).events?.map((event) => event.type)).toEqual([
+      'task.enqueued',
+      'task.claimed',
+      'task.completed',
+    ]);
   });
 });
 
@@ -200,8 +242,17 @@ describe('FileStorage', () => {
     await queue.completeCurrent('done');
 
     const raw = JSON.parse(await fs.readFile(filePath, 'utf8')) as TaskQueueState;
-    expect(raw.done[0]).toMatchObject({ description: 'persist me', source: 'system', outcome: 'completed', result: 'done' });
-    expect(raw.events?.map(event => event.type)).toEqual(['task.enqueued', 'task.claimed', 'task.completed']);
+    expect(raw.done[0]).toMatchObject({
+      description: 'persist me',
+      source: 'system',
+      outcome: 'completed',
+      result: 'done',
+    });
+    expect(raw.events?.map((event) => event.type)).toEqual([
+      'task.enqueued',
+      'task.claimed',
+      'task.completed',
+    ]);
   });
 
   it('returns an empty queue when the state file is missing', async () => {
@@ -229,26 +280,66 @@ describe('FileStorage', () => {
       done: [],
     });
 
-    expect(await storage.read()).toMatchObject({ pending: [{ id: 'pending', priority: 'urgent', attempt: 1 }] });
+    expect(await storage.read()).toMatchObject({
+      pending: [{ id: 'pending', priority: 'urgent', attempt: 1 }],
+    });
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        current: { id: '', description: 123, priority: 'unknown', source: 'external', addedAt: null, metadata: 'ignored' },
+        current: {
+          id: '',
+          description: 123,
+          priority: 'unknown',
+          source: 'external',
+          addedAt: null,
+          metadata: 'ignored',
+        },
         pending: 'bad',
-        done: [{ id: 'done', description: 'legacy done', priority: 'bad', source: 'bad', result: null, completedAt: 7 }],
-        events: [{ id: 'event', type: 'task.failed', taskId: 'done', at: '2026-01-01T00:00:00.000Z', data: null }, { type: 'bad', taskId: 'x' }],
+        done: [
+          {
+            id: 'done',
+            description: 'legacy done',
+            priority: 'bad',
+            source: 'bad',
+            result: null,
+            completedAt: 7,
+          },
+        ],
+        events: [
+          {
+            id: 'event',
+            type: 'task.failed',
+            taskId: 'done',
+            at: '2026-01-01T00:00:00.000Z',
+            data: null,
+          },
+          { type: 'bad', taskId: 'x' },
+        ],
       }),
       'utf8',
     );
 
     const normalized = await storage.read();
-    expect(normalized.current).toMatchObject({ description: '', priority: 'normal', source: 'application', attempt: 1 });
+    expect(normalized.current).toMatchObject({
+      description: '',
+      priority: 'normal',
+      source: 'application',
+      attempt: 1,
+    });
     expect(normalized.current?.id).toMatch(/^task_/);
     expect(normalized.current?.metadata).toBeUndefined();
     expect(normalized.pending).toEqual([]);
-    expect(normalized.done[0]).toMatchObject({ id: 'done', description: 'legacy done', priority: 'normal', outcome: 'completed', result: null });
+    expect(normalized.done[0]).toMatchObject({
+      id: 'done',
+      description: 'legacy done',
+      priority: 'normal',
+      outcome: 'completed',
+      result: null,
+    });
     expect(normalized.done[0].completedAt).toEqual(expect.any(String));
-    expect(normalized.events).toEqual([{ id: 'event', type: 'task.failed', taskId: 'done', at: '2026-01-01T00:00:00.000Z' }]);
+    expect(normalized.events).toEqual([
+      { id: 'event', type: 'task.failed', taskId: 'done', at: '2026-01-01T00:00:00.000Z' },
+    ]);
   });
 
   it('normalizes non-object and partially malformed persisted states', async () => {
@@ -261,21 +352,63 @@ describe('FileStorage', () => {
     await fs.writeFile(
       filePath,
       JSON.stringify({
-        current: { id: 'current', description: 'current task', priority: 'bad', source: 'bad', addedAt: 1 },
-        pending: [{ id: 1, description: 'pending task', priority: 'low', source: 'system', addedAt: 2, metadata: null }],
-        done: [{ id: 2, description: 3, priority: 'high', source: 'user', addedAt: 4, completedAt: 5, outcome: 'bad' }],
+        current: {
+          id: 'current',
+          description: 'current task',
+          priority: 'bad',
+          source: 'bad',
+          addedAt: 1,
+        },
+        pending: [
+          {
+            id: 1,
+            description: 'pending task',
+            priority: 'low',
+            source: 'system',
+            addedAt: 2,
+            metadata: null,
+          },
+        ],
+        done: [
+          {
+            id: 2,
+            description: 3,
+            priority: 'high',
+            source: 'user',
+            addedAt: 4,
+            completedAt: 5,
+            outcome: 'bad',
+          },
+        ],
       }),
       'utf8',
     );
 
     const normalized = await storage.read();
-    expect(normalized.current).toMatchObject({ id: 'current', description: 'current task', priority: 'normal', source: 'application', attempt: 1 });
+    expect(normalized.current).toMatchObject({
+      id: 'current',
+      description: 'current task',
+      priority: 'normal',
+      source: 'application',
+      attempt: 1,
+    });
     expect(normalized.current?.addedAt).toEqual(expect.any(String));
-    expect(normalized.pending[0]).toMatchObject({ description: 'pending task', priority: 'low', source: 'system', attempt: 1 });
+    expect(normalized.pending[0]).toMatchObject({
+      description: 'pending task',
+      priority: 'low',
+      source: 'system',
+      attempt: 1,
+    });
     expect(normalized.pending[0].id).toMatch(/^task_/);
     expect(normalized.pending[0].addedAt).toEqual(expect.any(String));
     expect(normalized.pending[0].metadata).toBeUndefined();
-    expect(normalized.done[0]).toMatchObject({ description: '', priority: 'high', source: 'user', outcome: 'completed', attempt: 1 });
+    expect(normalized.done[0]).toMatchObject({
+      description: '',
+      priority: 'high',
+      source: 'user',
+      outcome: 'completed',
+      attempt: 1,
+    });
     expect(normalized.done[0].id).toMatch(/^task_/);
     expect(normalized.done[0].addedAt).toEqual(expect.any(String));
     expect(normalized.done[0].completedAt).toEqual(expect.any(String));
