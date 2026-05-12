@@ -30,18 +30,21 @@ const queue = new TaskQueue({
 });
 
 // Enqueue
-const task = queue.enqueue('Process invoice 1234', { priority: 'high' });
+const task = await queue.enqueue('Process invoice 1234', { priority: 'high' });
 
-// Process
-const next = queue.startNext();
+// Claim the next task (returns the current task if one is already claimed)
+const next = await queue.claimNext();
 if (next) {
   try {
     await doWork(next);
-    queue.complete({ outcome: 'success' });
+    await queue.completeCurrent({ ok: true });
   } catch (err) {
-    queue.complete({ outcome: 'failed', evidence: String(err) });
+    await queue.completeCurrent({ error: String(err) });
   }
 }
+
+// Inspect state at any time
+const state = await queue.peek();
 ```
 
 ## API surface
@@ -52,11 +55,10 @@ if (next) {
 class TaskQueue {
   constructor(options: { storage: Storage });
 
-  enqueue(description: string, opts?: EnqueueOptions): Task;
-  startNext(): Task | undefined;
-  complete(result: CompleteResult): void;
-  removePending(id: string): boolean;
-  head(): TaskQueueState;
+  enqueue(description: string, opts?: EnqueueOptions): Promise<Task>;
+  claimNext(): Promise<Task | null>;
+  completeCurrent(result?: unknown): Promise<CompletedTask | null>;
+  peek(): Promise<TaskQueueState>;
 }
 ```
 
@@ -72,9 +74,24 @@ interface Storage {
 
 ### `FileStorage` (the one included implementation)
 
+Atomic temp-file writes + `proper-lockfile` for cross-process locking. Backed by a single JSON file you choose.
+
 ```ts
 class FileStorage implements Storage {
-  constructor(path: string, opts?: FileStorageOptions);
+  constructor(filePath: string);
+}
+```
+
+### Built-in `MemoryStorage` for tests
+
+Not exported from the package — copy this pattern into your test suite:
+
+```ts
+class MemoryStorage implements Storage {
+  state: TaskQueueState = { current: null, pending: [], done: [] };
+  async read() { return structuredClone(this.state); }
+  async write(state: TaskQueueState) { this.state = structuredClone(state); }
+  async withLock<T>(fn: () => Promise<T>) { return fn(); }
 }
 ```
 
