@@ -1,70 +1,48 @@
 # @ventus-software-solutions/task-queue
 
-File-based stateless-façade task queue with pluggable storage. Battle-tested by [AIDE](https://github.com/ventus-software-solutions/about-aide).
-
-## Why this exists
-
-Most Node task queues require Redis (BullMQ, Bee-Queue) or a SQL backend. That's overkill for many projects — a small autonomous agent, a personal automation, a single-server app that just needs reliable durable task processing without spinning up infrastructure.
-
-`@ventus-software-solutions/task-queue` is **storage-agnostic** with a battle-tested **file-based** backend included. The queue logic and the persistence are cleanly separated, so you can plug in your own storage (SQLite, Redis, in-memory for tests) without forking.
-
-The design pattern — *stateless façade over single-source-of-truth file* — was developed inside AIDE to handle concurrent writers safely without a database. It's been running every minute of AIDE's autonomy loop for months.
-
-## Install
-
-```sh
-npm install @ventus-software-solutions/task-queue
-# or
-pnpm add @ventus-software-solutions/task-queue
-```
-
-Requires Node 20+.
+File-based stateless-facade task queue with pluggable storage.
 
 ## Quick start
 
 ```ts
-import { TaskQueue, FileStorage } from '@ventus-software-solutions/task-queue';
+import { FileStorage, TaskQueue } from '@ventus-software-solutions/task-queue';
 
 const queue = new TaskQueue({
   storage: new FileStorage('./tasks.json'),
+  maxEvents: 1000,
 });
 
-// Enqueue
-const task = await queue.enqueue('Process invoice 1234', { priority: 'high' });
+await queue.enqueue('send digest email', {
+  priority: 'high',
+  source: 'application',
+  metadata: { accountId: 'acct_123' },
+});
 
-// Claim the next task (returns the current task if one is already claimed)
-const next = await queue.claimNext();
-if (next) {
-  try {
-    await doWork(next);
-    await queue.completeCurrent({ ok: true });
-  } catch (err) {
-    await queue.completeCurrent({ error: String(err) });
-  }
+const task = await queue.claimNext();
+if (task) {
+  await queue.completeCurrent({ ok: true });
 }
-
-// Inspect state at any time
-const state = await queue.peek();
 ```
 
 ## API surface
 
-### `TaskQueue`
-
 ```ts
 class TaskQueue {
-  constructor(options: { storage: Storage });
+  constructor(options: { storage: Storage; maxEvents?: number });
 
   enqueue(description: string, opts?: EnqueueOptions): Promise<Task>;
+  changePriority(taskId: string, newPriority: TaskPriority): Promise<Task | null>;
   claimNext(): Promise<Task | null>;
   completeCurrent(result?: unknown): Promise<CompletedTask | null>;
+  failCurrent(error: Error | string): Promise<CompletedTask | null>;
+  retry(taskId: string, opts?: RetryOptions): Promise<Task | null>;
+  cancel(taskId: string, reason?: string): Promise<CompletedTask | null>;
+  supersede(taskId: string, replacement: EnqueueReplacement): Promise<Task | null>;
+  get(taskId: string): Promise<Task | CompletedTask | null>;
+  list(filter?: TaskFilter): Promise<FilteredTasks>;
   peek(): Promise<TaskQueueState>;
 }
-```
 
-### `Storage` (interface)
-
-```ts
 interface Storage {
   read(): Promise<TaskQueueState>;
   write(state: TaskQueueState): Promise<void>;
@@ -72,47 +50,19 @@ interface Storage {
 }
 ```
 
-### `FileStorage` (the one included implementation)
+`FileStorage` is the included `Storage` implementation. It stores JSON on disk, serializes mutations with `proper-lockfile`, and writes via atomic temp-file rename.
 
-Atomic temp-file writes + `proper-lockfile` for cross-process locking. Backed by a single JSON file you choose.
+The public `Task` type carries `id`, `description`, `priority`, `source`, `addedAt`, `attempt`, optional `availableAt`, optional `parentTaskId`, and optional `metadata: Record<string, unknown>` for application-specific data. AIDE-specific fields such as agreement state and source references are intentionally excluded.
 
-```ts
-class FileStorage implements Storage {
-  constructor(filePath: string);
-}
-```
+## Lifecycle behavior
 
-### Built-in `MemoryStorage` for tests
+- `claimNext()` returns the existing current task if one is active; otherwise it claims the highest-priority pending task whose `availableAt` is not in the future.
+- `completeCurrent(result)` moves the current task to `done` with outcome `completed`.
+- `failCurrent(error)` moves the current task to `done` with outcome `failed` and serializes `Error.cause` recursively when present.
+- `retry(taskId, { delayMs })` creates a new pending task for a failed or superseded done task, links it with `parentTaskId`, increments `attempt`, and sets `availableAt` when delayed.
+- `cancel(taskId, reason)` moves a pending or current task to `done` with outcome `cancelled`.
+- `supersede(taskId, replacement)` moves a pending or current task to `done` with outcome `superseded` and enqueues the replacement task.
+- `get(taskId)` reads a task across current, pending, and done states.
+- `list(filter)` returns `FilteredTasks` and can filter by `status`, `priority`, `source`, `outcome`, and `includeUnavailable`.
 
-Not exported from the package — copy this pattern into your test suite:
-
-```ts
-class MemoryStorage implements Storage {
-  state: TaskQueueState = { current: null, pending: [], done: [] };
-  async read() { return structuredClone(this.state); }
-  async write(state: TaskQueueState) { this.state = structuredClone(state); }
-  async withLock<T>(fn: () => Promise<T>) { return fn(); }
-}
-```
-
-## Extending the Task type
-
-The public `Task` type carries `id`, `description`, `priority`, `source`, `addedAt`, and an optional `metadata: Record<string, unknown>` field for application-specific data.
-
-If you need fields like `agreedBy: string` or `sourceRef: string`, put them in `metadata` rather than asking us to extend the public type. This is the same pattern AIDE uses for her own internal fields.
-
-## Status
-
-`v0.x.y` — actively developed. Public API may shift before `v1.0.0`. After `1.0.0` we follow [Semantic Versioning](https://semver.org/) strictly with deprecation periods documented in [CHANGELOG.md](./CHANGELOG.md).
-
-## Provenance
-
-This package is written and developed by AIDE — an autonomous AI agent maintained by [Ventus](https://ventus.works). Commits, PRs, and issue triage are AIDE's work, human-reviewed during early operation. See the AIDE repo for more on how that works.
-
-## License
-
-MIT. See [LICENSE](../../LICENSE).
-
----
-
-Part of the [Ventus](https://ventus.works) open-source package family.
+Lifecycle events are stored in `TaskQueueState.events` and bounded by `maxEvents` (default `1000`; pass `Infinity` for an unbounded in-state audit history). This keeps v0.2.0 storage simple while preserving enough lifecycle history for package consumers.

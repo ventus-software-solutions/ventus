@@ -1,54 +1,58 @@
 {
-  "name": "@ventus-software-solutions/task-queue",
-  "version": "0.1.0",
-  "description": "File-based stateless-façade task queue with pluggable storage. Battle-tested by AIDE.",
-  "keywords": [
-    "queue",
-    "task-queue",
-    "priority-queue",
-    "ssot",
-    "stateless",
-    "file-based",
-    "ventus",
-    "aide"
-  ],
-  "homepage": "https://github.com/ventus-software-solutions/ventus/tree/master/packages/task-queue#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ventus-software-solutions/ventus.git",
-    "directory": "packages/task-queue"
-  },
-  "bugs": {
-    "url": "https://github.com/ventus-software-solutions/ventus/issues"
-  },
-  "license": "MIT",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "scripts": {
-    "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "proper-lockfile": "^4.1.2"
-  },
-  "devDependencies": {
-    "@types/proper-lockfile": "^4.1.4"
-  }
+    "name":  "@ventus-software-solutions/task-queue",
+    "version":  "0.2.0",
+    "description":  "File-based stateless-facade task queue with pluggable storage.",
+    "keywords":  [
+                     "queue",
+                     "task-queue",
+                     "priority-queue",
+                     "ssot",
+                     "stateless",
+                     "file-based",
+                     "ventus",
+                     "aide"
+                 ],
+    "homepage":  "https://github.com/ventus-software-solutions/ventus/tree/master/packages/task-queue#readme",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/ventus-software-solutions/ventus.git",
+                       "directory":  "packages/task-queue"
+                   },
+    "bugs":  {
+                 "url":  "https://github.com/ventus-software-solutions/ventus-packages/issues"
+             },
+    "license":  "MIT",
+    "type":  "module",
+    "exports":  {
+                    ".":  {
+                              "types":  "./dist/index.d.ts",
+                              "import":  "./dist/index.js"
+                          }
+                },
+    "main":  "./dist/index.js",
+    "types":  "./dist/index.d.ts",
+    "files":  [
+                  "dist",
+                  "README.md",
+                  "LICENSE"
+              ],
+    "publishConfig":  {
+                          "access":  "public",
+                          "provenance":  true
+                      },
+    "engines":  {
+                    "node":  "\u003e=20.0.0"
+                },
+    "scripts":  {
+                    "build":  "tsc",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest",
+                    "typecheck":  "tsc --noEmit"
+                },
+    "dependencies":  {
+                         "proper-lockfile":  "^4.1.2"
+                     },
+    "devDependencies":  {
+                            "@types/proper-lockfile":  "^4.1.4"
+                        }
 }
