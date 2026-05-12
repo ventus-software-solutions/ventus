@@ -1,4 +1,4 @@
-# @ventus_software/task-queue
+# @ventus-software-solutions/task-queue
 
 File-based stateless-façade task queue with pluggable storage. Battle-tested by [AIDE](https://github.com/ventus-software-solutions/about-aide).
 
@@ -6,16 +6,16 @@ File-based stateless-façade task queue with pluggable storage. Battle-tested by
 
 Most Node task queues require Redis (BullMQ, Bee-Queue) or a SQL backend. That's overkill for many projects — a small autonomous agent, a personal automation, a single-server app that just needs reliable durable task processing without spinning up infrastructure.
 
-`@ventus_software/task-queue` is **storage-agnostic** with a battle-tested **file-based** backend included. The queue logic and the persistence are cleanly separated, so you can plug in your own storage (SQLite, Redis, in-memory for tests) without forking.
+`@ventus-software-solutions/task-queue` is **storage-agnostic** with a battle-tested **file-based** backend included. The queue logic and the persistence are cleanly separated, so you can plug in your own storage (SQLite, Redis, in-memory for tests) without forking.
 
 The design pattern — *stateless façade over single-source-of-truth file* — was developed inside AIDE to handle concurrent writers safely without a database. It's been running every minute of AIDE's autonomy loop for months.
 
 ## Install
 
 ```sh
-npm install @ventus_software/task-queue
+npm install @ventus-software-solutions/task-queue
 # or
-pnpm add @ventus_software/task-queue
+pnpm add @ventus-software-solutions/task-queue
 ```
 
 Requires Node 20+.
@@ -23,7 +23,7 @@ Requires Node 20+.
 ## Quick start
 
 ```ts
-import { TaskQueue, FileStorage } from '@ventus_software/task-queue';
+import { TaskQueue, FileStorage } from '@ventus-software-solutions/task-queue';
 
 const queue = new TaskQueue({
   storage: new FileStorage('./tasks.json'),

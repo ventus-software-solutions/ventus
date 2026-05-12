@@ -1,4 +1,4 @@
-# @ventus_software/task-queue
+# @ventus-software-solutions/task-queue
 
 ## 0.1.0
 
