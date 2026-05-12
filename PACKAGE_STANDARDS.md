@@ -4,7 +4,7 @@ Scope: every package under `packages/` in this repository.
 
 ## Purpose
 
-Release and maintenance rules for `@ventus-software-solutions/*` packages so future packages inherit the same discipline instead of rediscovering it.
+Release and maintenance rules for `@ventus-software-solutions/*` packages so future packages inherit the same discipline instead of rediscovering it. The first package in this repo, `task-queue`, was extracted from [AIDE](https://github.com/ventus-software-solutions/about-aide); subsequent packages may share that origin or be authored fresh.
 
 ## Package identity
 
@@ -51,7 +51,7 @@ Release and maintenance rules for `@ventus-software-solutions/*` packages so fut
 2. Update code, tests, README, design notes, and version metadata together.
 3. Run package-local verification: tests, typecheck, build.
 4. Inspect `git diff` for accidental credentials, logs, or scratch files before commit.
-5. Commit one logical change per release with verification notes in the message.
+5. Commit one logical change per release with verification notes in the message. 
 6. Do not publish externally unless explicitly approved.
 
 ## Changelog
