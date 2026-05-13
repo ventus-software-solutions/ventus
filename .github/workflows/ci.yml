@@ -42,3 +42,72 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+
+  smoke:
+    name: Tarball install smoke (task-queue)
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ventus-software-solutions/task-queue build
+      - name: Pack and install into a fresh project
+        run: |
+          set -euo pipefail
+
+          cd packages/task-queue
+          pnpm pack
+          TARBALL="$(pwd)/$(ls ventus-software-solutions-task-queue-*.tgz | head -1)"
+          echo "Built tarball: $TARBALL"
+
+          INSTALL_DIR="$(mktemp -d)"
+          echo "Installing into: $INSTALL_DIR"
+          cd "$INSTALL_DIR"
+          npm init -y --silent > /dev/null
+          npm pkg set type=module
+          npm install --silent "$TARBALL"
+
+          cat > smoke.mjs <<'EOF'
+          import { TaskQueue, FileStorage } from '@ventus-software-solutions/task-queue';
+
+          const queue = new TaskQueue({ storage: new FileStorage('./tasks.json') });
+
+          const task = await queue.enqueue('smoke test task', {
+            priority: 'high',
+            source: 'system',
+          });
+          if (!task || !task.id || task.description !== 'smoke test task') {
+            console.error('FAIL: unexpected enqueue result:', task);
+            process.exit(1);
+          }
+
+          const claimed = await queue.claimNext();
+          if (!claimed || claimed.id !== task.id) {
+            console.error('FAIL: claim mismatch:', { expected: task.id, got: claimed });
+            process.exit(1);
+          }
+
+          const completed = await queue.completeCurrent({ ok: true });
+          if (!completed || completed.outcome !== 'completed' || completed.id !== task.id) {
+            console.error('FAIL: complete result:', completed);
+            process.exit(1);
+          }
+
+          const fetched = await queue.get(task.id);
+          if (!fetched || fetched.id !== task.id) {
+            console.error('FAIL: get result:', fetched);
+            process.exit(1);
+          }
+
+          console.log('OK: tarball smoke passed (' + task.id + ')');
+          EOF
+
+          node smoke.mjs
+
+          cd /
+          rm -rf "$INSTALL_DIR"
