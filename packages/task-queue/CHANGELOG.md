@@ -1,5 +1,11 @@
 # @ventus-software-solutions/task-queue
 
+## 0.3.0
+
+### Minor Changes
+
+- b4fcec0: Add active-task idempotency keys, dependency blocking, safe deferral, explicit worker resume metadata, deterministic queue sequencing, and UUID task IDs.
+
 ## 0.2.1
 
 ### Patch Changes
