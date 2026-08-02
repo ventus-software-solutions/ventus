@@ -147,6 +147,39 @@ describe('TaskQueue', () => {
     expect(await queue.retry(claimed.id)).toMatchObject({ attempt: 2 });
   });
 
+  it('returns the existing pending retry when the same terminal task is retried twice', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    await queue.enqueue('retry exactly once');
+    await queue.claimNext();
+    const failed = await queue.failCurrent('transient failure');
+    if (!failed) throw new Error('Expected failed task to exist');
+
+    const firstRetry = await queue.retry(failed.id);
+    const secondRetry = await queue.retry(failed.id);
+
+    expect(secondRetry?.id).toBe(firstRetry?.id);
+    expect((await queue.peek()).pending).toHaveLength(1);
+    expect(
+      (await queue.peek()).events?.filter((event) => event.type === 'task.retried'),
+    ).toHaveLength(1);
+  });
+
+  it('persists completed tasks without undeclared lifecycle fields', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    await queue.enqueue('complete cleanly');
+    await queue.claimNext();
+    const completed = await queue.completeCurrent();
+
+    expect(completed).not.toHaveProperty('status');
+    expect(completed).not.toHaveProperty('updatedAt');
+    expect(storage.state.done[0]).not.toHaveProperty('status');
+    expect(storage.state.done[0]).not.toHaveProperty('updatedAt');
+  });
+
   it('cancels pending/current tasks and supersedes only pending/current tasks', async () => {
     const storage = new MemoryStorage();
     const queue = new TaskQueue({ storage });
