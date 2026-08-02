@@ -227,6 +227,11 @@ export class TaskQueue {
       const original = state.done.find((task) => task.id === taskId) ?? null;
       if (!original || (original.outcome !== 'failed' && original.outcome !== 'superseded'))
         return null;
+      const existingRetry =
+        (state.current?.parentTaskId === original.id ? state.current : null) ??
+        state.pending.find((task) => task.parentTaskId === original.id) ??
+        null;
+      if (existingRetry) return existingRetry;
       const delayMs = opts.delayMs ?? 0;
       const metadata = opts.metadata ?? original.metadata;
       const task = createTask(
@@ -449,8 +454,6 @@ function completeTask(
   const { result, ...rest } = extras;
   const baseCompleted = {
     ...task,
-    status: 'done' as const,
-    updatedAt: now,
     completedAt: now,
     outcome,
     ...rest,
