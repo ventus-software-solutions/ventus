@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileStorage, type Storage, TaskQueue, type TaskQueueState } from '../src/index.js';
 
 class MemoryStorage implements Storage {
@@ -253,6 +253,136 @@ describe('TaskQueue', () => {
       'task.completed',
     ]);
   });
+
+  it('deduplicates active tasks by idempotency key', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    const first = await queue.enqueue('send the digest', { idempotencyKey: 'digest:acct_123' });
+    const duplicate = await queue.enqueue('send the digest again', {
+      idempotencyKey: 'digest:acct_123',
+    });
+
+    expect(duplicate.id).toBe(first.id);
+    expect(storage.state.pending).toHaveLength(1);
+    expect(storage.state.events?.at(-1)).toMatchObject({
+      type: 'task.enqueue_deduplicated',
+      taskId: first.id,
+    });
+
+    await queue.claimNext();
+    await queue.completeCurrent();
+    const nextOccurrence = await queue.enqueue('send the next digest', {
+      idempotencyKey: 'digest:acct_123',
+    });
+    expect(nextOccurrence.id).not.toBe(first.id);
+  });
+
+  it('defers the current task to the back of its priority band', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    const first = await queue.enqueue('first');
+    const second = await queue.enqueue('second');
+    expect((await queue.claimNext())?.id).toBe(first.id);
+
+    const deferred = await queue.deferCurrent();
+
+    expect(deferred?.id).toBe(first.id);
+    expect((await queue.claimNext())?.id).toBe(second.id);
+    await queue.completeCurrent();
+    expect((await queue.claimNext())?.id).toBe(first.id);
+    expect(storage.state.events?.some((event) => event.type === 'task.deferred')).toBe(true);
+  });
+
+  it('does not claim a deferred task until its delay has elapsed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-02T12:00:00.000Z'));
+    try {
+      const queue = new TaskQueue({ storage: new MemoryStorage() });
+      await queue.enqueue('try again later');
+      await queue.claimNext();
+      await queue.deferCurrent({ delayMs: 60_000 });
+
+      expect(await queue.claimNext()).toBeNull();
+      vi.advanceTimersByTime(60_000);
+      expect(await queue.claimNext()).toMatchObject({ description: 'try again later' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses persisted sequence numbers to preserve FIFO when timestamps collide', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-02T12:00:00.000Z'));
+    try {
+      const storage = new MemoryStorage();
+      const queue = new TaskQueue({ storage });
+      const first = await queue.enqueue('first');
+      const second = await queue.enqueue('second');
+      await queue.enqueue('third');
+
+      storage.state.pending.reverse();
+
+      expect((await queue.claimNext())?.id).toBe(first.id);
+      await queue.completeCurrent();
+      expect((await queue.claimNext())?.id).toBe(second.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not claim a task until all dependencies completed successfully', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    const dependency = await queue.enqueue('dependency', { priority: 'normal' });
+    const blocked = await queue.enqueue('blocked child', {
+      priority: 'urgent',
+      blockedBy: [dependency.id],
+    });
+
+    expect((await queue.claimNext())?.id).toBe(dependency.id);
+    await queue.completeCurrent();
+    expect((await queue.claimNext())?.id).toBe(blocked.id);
+  });
+
+  it('keeps a task blocked when a dependency ends unsuccessfully', async () => {
+    const queue = new TaskQueue({ storage: new MemoryStorage() });
+    const dependency = await queue.enqueue('dependency');
+    await queue.enqueue('blocked child', { priority: 'urgent', blockedBy: [dependency.id] });
+
+    expect((await queue.claimNext())?.id).toBe(dependency.id);
+    await queue.failCurrent('cannot continue');
+    expect(await queue.claimNext()).toBeNull();
+  });
+
+  it('records explicit restart resumes without treating repeated claims as resumes', async () => {
+    const storage = new MemoryStorage();
+    const queue = new TaskQueue({ storage });
+
+    await queue.enqueue('resume me');
+    const claimed = await queue.claimNext();
+    expect(claimed).toMatchObject({ claimedAt: expect.any(String), resumeCount: 0 });
+    expect(await queue.claimNext()).toMatchObject({ resumeCount: 0 });
+
+    expect(await queue.resumeCurrent()).toMatchObject({
+      id: claimed?.id,
+      resumeCount: 1,
+      lastResumedAt: expect.any(String),
+    });
+    expect(await queue.resumeCurrent()).toMatchObject({ resumeCount: 2 });
+    expect(storage.state.events?.filter((event) => event.type === 'task.resumed')).toHaveLength(2);
+  });
+
+  it('generates collision-resistant UUID task ids', async () => {
+    const queue = new TaskQueue({ storage: new MemoryStorage() });
+    const task = await queue.enqueue('uuid task');
+
+    expect(task.id).toMatch(
+      /^task_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
 });
 
 describe('FileStorage', () => {
@@ -286,6 +416,24 @@ describe('FileStorage', () => {
       'task.claimed',
       'task.completed',
     ]);
+  });
+
+  it('round-trips lifecycle coordination fields', async () => {
+    const filePath = path.join(tempDir, 'coordination.json');
+    const queue = new TaskQueue({ storage: new FileStorage(filePath) });
+    const dependency = await queue.enqueue('dependency');
+    const task = await queue.enqueue('coordinated task', {
+      blockedBy: [dependency.id],
+      idempotencyKey: 'coordinated:1',
+    });
+
+    const state = await new FileStorage(filePath).read();
+    expect(state.pending.find((candidate) => candidate.id === task.id)).toMatchObject({
+      sequence: expect.any(Number),
+      queuedAt: expect.any(String),
+      blockedBy: [dependency.id],
+      idempotencyKey: 'coordinated:1',
+    });
   });
 
   it('returns an empty queue when the state file is missing', async () => {

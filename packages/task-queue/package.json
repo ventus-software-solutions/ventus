@@ -19,7 +19,7 @@
     "directory": "packages/task-queue"
   },
   "bugs": {
-    "url": "https://github.com/ventus-software-solutions/ventus-packages/issues"
+    "url": "https://github.com/ventus-software-solutions/ventus/issues"
   },
   "license": "MIT",
   "type": "module",
