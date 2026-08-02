@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
@@ -8,8 +9,11 @@ export type TaskStatus = 'pending' | 'current' | 'done';
 export type TaskOutcome = 'completed' | 'failed' | 'cancelled' | 'superseded';
 export type TaskLifecycleEventType =
   | 'task.enqueued'
+  | 'task.enqueue_deduplicated'
   | 'task.priority_changed'
   | 'task.claimed'
+  | 'task.deferred'
+  | 'task.resumed'
   | 'task.completed'
   | 'task.failed'
   | 'task.retried'
@@ -23,8 +27,15 @@ export interface Task {
   source: TaskSource;
   addedAt: string;
   attempt: number;
+  sequence?: number;
+  queuedAt?: string;
+  claimedAt?: string;
+  resumeCount?: number;
+  lastResumedAt?: string;
   availableAt?: string;
   parentTaskId?: string;
+  blockedBy?: string[];
+  idempotencyKey?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -63,10 +74,18 @@ export interface EnqueueOptions {
   source?: TaskSource;
   metadata?: Record<string, unknown>;
   availableAt?: string;
+  blockedBy?: string[];
+  idempotencyKey?: string;
 }
 
 export interface RetryOptions {
   attempt?: number;
+  delayMs?: number;
+  priority?: TaskPriority;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DeferOptions {
   delayMs?: number;
   priority?: TaskPriority;
   metadata?: Record<string, unknown>;
@@ -150,7 +169,20 @@ export class TaskQueue {
   async enqueue(description: string, opts: EnqueueOptions = {}): Promise<Task> {
     return this.options.storage.withLock(async () => {
       const state = await this.options.storage.read();
-      const task = createTask(description, opts);
+      if (opts.idempotencyKey) {
+        const existing =
+          (state.current?.idempotencyKey === opts.idempotencyKey ? state.current : null) ??
+          state.pending.find((task) => task.idempotencyKey === opts.idempotencyKey) ??
+          null;
+        if (existing) {
+          appendEvent(state, this.maxEvents, 'task.enqueue_deduplicated', existing.id, {
+            idempotencyKey: opts.idempotencyKey,
+          });
+          await this.options.storage.write(state);
+          return existing;
+        }
+      }
+      const task = createTask(description, opts, { sequence: allocateSequence(state) });
       state.pending.push(task);
       state.pending.sort(comparePriority);
       appendEvent(state, this.maxEvents, 'task.enqueued', task.id, {
@@ -185,9 +217,18 @@ export class TaskQueue {
       if (state.current) return state.current;
       state.pending.sort(comparePriority);
       const now = Date.now();
-      const nextIndex = state.pending.findIndex((task) => isAvailable(task, now));
+      const resolvedDependencies = new Set(
+        state.done.filter((task) => task.outcome === 'completed').map((task) => task.id),
+      );
+      const nextIndex = state.pending.findIndex(
+        (task) => isAvailable(task, now) && dependenciesResolved(task, resolvedDependencies),
+      );
       state.current = nextIndex >= 0 ? (state.pending.splice(nextIndex, 1)[0] ?? null) : null;
-      if (state.current) appendEvent(state, this.maxEvents, 'task.claimed', state.current.id);
+      if (state.current) {
+        state.current.claimedAt ??= new Date().toISOString();
+        state.current.resumeCount ??= 0;
+        appendEvent(state, this.maxEvents, 'task.claimed', state.current.id);
+      }
       await this.options.storage.write(state);
       return state.current;
     });
@@ -239,12 +280,15 @@ export class TaskQueue {
         {
           priority: opts.priority ?? original.priority,
           source: original.source,
+          ...(original.blockedBy ? { blockedBy: original.blockedBy } : {}),
+          ...(original.idempotencyKey ? { idempotencyKey: original.idempotencyKey } : {}),
           ...(metadata !== undefined ? { metadata } : {}),
           ...(delayMs > 0 ? { availableAt: new Date(Date.now() + delayMs).toISOString() } : {}),
         },
         {
           attempt: opts.attempt ?? original.attempt + 1,
           parentTaskId: original.id,
+          sequence: allocateSequence(state),
         },
       );
       state.pending.push(task);
@@ -302,6 +346,7 @@ export class TaskQueue {
       const replacementTask = createTask(replacement.description, replacement, {
         attempt: 1,
         parentTaskId: original.id,
+        sequence: allocateSequence(state),
       });
       const completed = completeTask(original, 'superseded', { supersededBy: replacementTask.id });
       if (state.current?.id === original.id) state.current = null;
@@ -318,6 +363,44 @@ export class TaskQueue {
       });
       await this.options.storage.write(state);
       return replacementTask;
+    });
+  }
+
+  async deferCurrent(opts: DeferOptions = {}): Promise<Task | null> {
+    return this.options.storage.withLock(async () => {
+      const state = await this.options.storage.read();
+      if (!state.current) return null;
+      const delayMs = opts.delayMs ?? 0;
+      const now = new Date();
+      const { availableAt: _previousAvailableAt, ...current } = state.current;
+      const task: Task = {
+        ...current,
+        priority: opts.priority ?? state.current.priority,
+        queuedAt: now.toISOString(),
+        sequence: allocateSequence(state),
+        ...(delayMs > 0 ? { availableAt: new Date(now.getTime() + delayMs).toISOString() } : {}),
+        ...(opts.metadata ? { metadata: { ...state.current.metadata, ...opts.metadata } } : {}),
+      };
+      state.current = null;
+      state.pending.push(task);
+      state.pending.sort(comparePriority);
+      appendEvent(state, this.maxEvents, 'task.deferred', task.id, { delayMs });
+      await this.options.storage.write(state);
+      return task;
+    });
+  }
+
+  async resumeCurrent(): Promise<Task | null> {
+    return this.options.storage.withLock(async () => {
+      const state = await this.options.storage.read();
+      if (!state.current) return null;
+      state.current.resumeCount = (state.current.resumeCount ?? 0) + 1;
+      state.current.lastResumedAt = new Date().toISOString();
+      appendEvent(state, this.maxEvents, 'task.resumed', state.current.id, {
+        resumeCount: state.current.resumeCount,
+      });
+      await this.options.storage.write(state);
+      return state.current;
     });
   }
 
@@ -383,17 +466,22 @@ function normalizeState(value: unknown): TaskQueueState {
 function createTask(
   description: string,
   opts: EnqueueOptions = {},
-  derived: { attempt?: number; parentTaskId?: string } = {},
+  derived: { attempt?: number; parentTaskId?: string; sequence?: number } = {},
 ): Task {
+  const now = new Date().toISOString();
   return {
     id: generateId(),
     description,
     priority: opts.priority ?? 'normal',
     source: opts.source ?? 'application',
-    addedAt: new Date().toISOString(),
+    addedAt: now,
+    queuedAt: now,
     attempt: derived.attempt ?? 1,
+    ...(derived.sequence === undefined ? {} : { sequence: derived.sequence }),
     ...(opts.availableAt ? { availableAt: opts.availableAt } : {}),
     ...(derived.parentTaskId ? { parentTaskId: derived.parentTaskId } : {}),
+    ...(opts.blockedBy ? { blockedBy: [...opts.blockedBy] } : {}),
+    ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
     ...(opts.metadata ? { metadata: opts.metadata } : {}),
   };
 }
@@ -410,8 +498,27 @@ function normalizeTask(value: unknown): Task {
       typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) && raw.attempt > 0
         ? raw.attempt
         : 1,
+    ...(typeof raw.sequence === 'number' && Number.isFinite(raw.sequence)
+      ? { sequence: raw.sequence }
+      : {}),
+    ...(typeof raw.queuedAt === 'string' ? { queuedAt: raw.queuedAt } : {}),
+    ...(typeof raw.claimedAt === 'string' ? { claimedAt: raw.claimedAt } : {}),
+    ...(typeof raw.resumeCount === 'number' &&
+    Number.isFinite(raw.resumeCount) &&
+    raw.resumeCount >= 0
+      ? { resumeCount: raw.resumeCount }
+      : {}),
+    ...(typeof raw.lastResumedAt === 'string' ? { lastResumedAt: raw.lastResumedAt } : {}),
     ...(typeof raw.availableAt === 'string' ? { availableAt: raw.availableAt } : {}),
     ...(typeof raw.parentTaskId === 'string' ? { parentTaskId: raw.parentTaskId } : {}),
+    ...(Array.isArray(raw.blockedBy)
+      ? {
+          blockedBy: raw.blockedBy.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0,
+          ),
+        }
+      : {}),
+    ...(typeof raw.idempotencyKey === 'string' ? { idempotencyKey: raw.idempotencyKey } : {}),
     ...(raw.metadata && typeof raw.metadata === 'object'
       ? { metadata: raw.metadata as Record<string, unknown> }
       : {}),
@@ -512,7 +619,45 @@ function normalizeSerializedError(value: unknown): SerializedTaskError {
 
 function comparePriority(a: Task, b: Task): number {
   const rank: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-  return rank[a.priority] - rank[b.priority] || a.addedAt.localeCompare(b.addedAt);
+  const sequenceOrder =
+    a.sequence !== undefined && b.sequence !== undefined ? a.sequence - b.sequence : 0;
+  return (
+    rank[a.priority] - rank[b.priority] ||
+    sequenceOrder ||
+    (a.queuedAt ?? a.addedAt).localeCompare(b.queuedAt ?? b.addedAt) ||
+    compareOptionalNumber(a.sequence, b.sequence) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function compareOptionalNumber(a: number | undefined, b: number | undefined): number {
+  if (a === undefined && b === undefined) return 0;
+  if (a === undefined) return 1;
+  if (b === undefined) return -1;
+  return a - b;
+}
+
+function allocateSequence(state: TaskQueueState): number {
+  const tasks: Task[] = [
+    ...(state.current ? [state.current] : []),
+    ...state.pending,
+    ...state.done,
+  ];
+  return (
+    tasks.reduce(
+      (maximum, task) =>
+        typeof task.sequence === 'number' && Number.isFinite(task.sequence)
+          ? Math.max(maximum, task.sequence)
+          : maximum,
+      0,
+    ) + 1
+  );
+}
+
+function dependenciesResolved(task: Task, resolvedDependencies: Set<string>): boolean {
+  return (
+    !task.blockedBy?.length || task.blockedBy.every((taskId) => resolvedDependencies.has(taskId))
+  );
 }
 
 function isAvailable(task: Task, now = Date.now()): boolean {
@@ -559,8 +704,11 @@ function isOutcome(value: unknown): value is TaskOutcome {
 function isEventType(value: unknown): value is TaskLifecycleEventType {
   return (
     value === 'task.enqueued' ||
+    value === 'task.enqueue_deduplicated' ||
     value === 'task.priority_changed' ||
     value === 'task.claimed' ||
+    value === 'task.deferred' ||
+    value === 'task.resumed' ||
     value === 'task.completed' ||
     value === 'task.failed' ||
     value === 'task.retried' ||
@@ -570,5 +718,5 @@ function isEventType(value: unknown): value is TaskLifecycleEventType {
 }
 
 function generateId(): string {
-  return `task_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return `task_${randomUUID()}`;
 }
