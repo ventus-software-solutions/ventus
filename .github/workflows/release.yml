@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +29,21 @@ jobs:
         run: npm install --global npm@11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Create Release Pull Request or Publish
+      - name: Detect pending changesets
+        id: pending-changesets
+        shell: bash
+        run: |
+          if find .changeset -maxdepth 1 -type f -name '*.md' ! -name 'README.md' -print -quit | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pending changesets detected. Create the version PR with pnpm run version."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish released packages
+        if: steps.pending-changesets.outputs.found == 'false'
         uses: changesets/action@v1
         with:
           publish: pnpm run release
-          version: pnpm run version
-          commit: "chore: release packages"
-          title: "chore: release packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
