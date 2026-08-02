@@ -1,6 +1,6 @@
 {
   "name": "@ventus-software-solutions/task-queue",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "File-based stateless-facade task queue with pluggable storage.",
   "keywords": [
     "queue",
@@ -31,13 +31,17 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "engines": {
-    "node": "\u003e=20.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "tsc",
