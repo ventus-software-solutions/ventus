@@ -1,5 +1,12 @@
 # @ventus-software-solutions/task-queue
 
+## 0.2.1
+
+### Patch Changes
+
+- ea4ef7f: Keep retries idempotent while one retry is pending or current, and stop persisting
+  undeclared lifecycle fields on completed tasks.
+
 ## 0.2.0
 
 ### Minor Changes
