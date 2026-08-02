@@ -27,7 +27,7 @@ jobs:
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
       - name: Use an npm CLI with trusted-publishing support
-        run: npm install --global npm@latest
+        run: npm install --global npm@11.5.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Create Release Pull Request or Publish
